@@ -40,10 +40,18 @@ object EventsKMeansModel {
   def stringToDataPosition(data:String) : Int = {
     try{
 
-      val pos1 = data.indexOf('/')
-      val pos2 = data.indexOf(':')
-      val time = data.substring(pos1+1, pos2)
-      val fechaAux = data.substring(0, data.indexOf('-'))
+      println(data)
+      // fecha viene con el formato DD/MM/YYYY
+      val fecha = data.substring(0, data.indexOf('-'))
+      println(fecha)
+      val hora = data.substring(data.indexOf('-')+1, data.indexOf(':'))
+      println(hora)
+
+
+//      val pos1 = data.indexOf('/')
+//      val pos2 = data.indexOf(':')
+//      val time = data.substring(pos1+1, pos2)
+//      val fechaAux = data.substring(0, data.indexOf('-'))
 
 
       //val dates2 = new Regex("([\\D])")
@@ -54,13 +62,16 @@ object EventsKMeansModel {
       //val time = pp.apply(3)
 
       import java.text.SimpleDateFormat
-      val inputDate = new SimpleDateFormat("dd/MM/yyyy").parse(fechaAux)
+      //val inputDate = new SimpleDateFormat("dd/MM/yyyy").parse(fechaAux)
+      val inputDate = new SimpleDateFormat("dd/MM/yyyy").parse(fecha)
       val calendar = Calendar.getInstance
       calendar.setTime(inputDate)
 
       val pos = calendar.get(Calendar.DAY_OF_WEEK)
-      val res = ((pos-1)*24 + time.toInt)
-      //println("Data: " + data + " - pos: " + res + " - time: " + time.toInt)
+      //val res = ((pos-1)*24 + time.toInt)
+      val res = ((pos-1) * 24) + hora.toInt
+
+      println("res: " + res)
 
       res
 
@@ -97,7 +108,9 @@ object EventsKMeansModel {
     */
   def crearDataSet(trainning: Int) : DataFrame = {
 
-    val path = (trainning) ? "hdfs://localhost:9000////pfm/events/trainning/*elephoneEvents*.csv" : "hdfs://localhost:9000////pfm/events/predict/*elephoneEvents*.csv"
+    var  path = ""
+    if (trainning == 0)  path = "hdfs://localhost:9000////pfm/events/trainning/*elephoneEvents*.csv"
+    else path = "hdfs://localhost:9000////pfm/events/predict/*elephoneEvents*.csv"
 
     val df = session.read.format("com.databricks.spark.csv")
       .option("header", "true")
@@ -163,6 +176,8 @@ object EventsKMeansModel {
     // convertir un array de vector a un seq de (0, vector)
     val dataset = crearDataSet(1)
 
+    import session.implicits._
+
     val transformed = sameModel.transform(dataset)
     transformed.map(x =>{
       new Antenna(x.get(0).toString, 0, 0.toFloat, 0.toFloat, x.get(2).toString.toInt)})
@@ -175,8 +190,17 @@ object EventsKMeansModel {
   def main(args: Array[String]): Unit = {
 
 
-    entrenarModelo()
-    predecirModelo()
+    stringToDataPosition("17/12/2017-23:25:33.222")
+    stringToDataPosition("18/12/2017-23:25:33.222")
+    stringToDataPosition("19/12/2017-23:25:33.222")
+    stringToDataPosition("20/12/2017-23:25:33.222")
+    stringToDataPosition("21/12/2017-23:25:33.222")
+    stringToDataPosition("22/12/2017-23:25:33.222")
+    stringToDataPosition("23/12/2017-23:25:33.222")
+
+
+    //entrenarModelo()
+    //predecirModelo()
 
     session.close()
 
