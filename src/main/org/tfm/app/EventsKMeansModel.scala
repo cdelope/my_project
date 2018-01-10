@@ -5,18 +5,16 @@ import java.util.Calendar
 import org.apache.spark.SparkConf
 import org.apache.spark.ml.clustering.{KMeans, KMeansModel}
 import org.apache.spark.ml.linalg.Vectors
-import org.apache.spark.mllib.feature.Normalizer
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.tfm.dataupload.AntennaStore
 import org.tfm.structs.Antenna
 
-import scala.util.matching.Regex
 
 
 object EventsKMeansModel {
 
   val conf = new SparkConf(true)
-    .set("spark.cassandra.connection.host", "127.0.0.1")
+    .set("spark.cassandra.connection.host", "127.0.0.1").set("spark.cassandra.connection.port", "9045")
 
   val session = SparkSession.builder()
     .appName("Test spark")
@@ -25,7 +23,7 @@ object EventsKMeansModel {
     .getOrCreate()
 
 
-  val normalizer1 = new Normalizer()
+  //val normalizer1 = new Normalizer()
 
 
   /**
@@ -40,38 +38,20 @@ object EventsKMeansModel {
   def stringToDataPosition(data:String) : Int = {
     try{
 
-      println(data)
       // fecha viene con el formato DD/MM/YYYY
       val fecha = data.substring(0, data.indexOf('-'))
-      println(fecha)
       val hora = data.substring(data.indexOf('-')+1, data.indexOf(':'))
-      println(hora)
 
-
-//      val pos1 = data.indexOf('/')
-//      val pos2 = data.indexOf(':')
-//      val time = data.substring(pos1+1, pos2)
-//      val fechaAux = data.substring(0, data.indexOf('-'))
-
-
-      //val dates2 = new Regex("([\\D])")
-
-      //val pp = dates2.split(data).filter(x=>{!(x.isEmpty)})
-      //pp.foreach(println(_))
-      //val fechaAux = pp.apply(0) + "/" + pp.apply(1) + "/" + pp.apply(2)
-      //val time = pp.apply(3)
 
       import java.text.SimpleDateFormat
-      //val inputDate = new SimpleDateFormat("dd/MM/yyyy").parse(fechaAux)
       val inputDate = new SimpleDateFormat("dd/MM/yyyy").parse(fecha)
       val calendar = Calendar.getInstance
       calendar.setTime(inputDate)
 
       val pos = calendar.get(Calendar.DAY_OF_WEEK)
-      //val res = ((pos-1)*24 + time.toInt)
       val res = ((pos-1) * 24) + hora.toInt
 
-      println("res: " + res)
+      //println("Fecha: " + data + " pos: " + pos + " hora: " + hora.toInt.toString + " res: " +res)
 
       res
 
@@ -110,7 +90,7 @@ object EventsKMeansModel {
 
     var  path = ""
     if (trainning == 0)  path = "hdfs://localhost:9000////pfm/events/trainning/*elephoneEvents*.csv"
-    else path = "hdfs://localhost:9000////pfm/events/predict/*elephoneEvents*.csv"
+        else path = "hdfs://localhost:9000////pfm/events/predict/*elephoneEvents*.csv"
 
     val df = session.read.format("com.databricks.spark.csv")
       .option("header", "true")
@@ -122,7 +102,7 @@ object EventsKMeansModel {
         (stringToDataPosition(t(1).toString),(t(2).toString.trim))
       }).filter(x=> {x._1 != -1})
       .map(x => {(x,1L)})
-      .reduceByKey(_+_)
+      .reduceByKey((x,y) => {(1L)})//_+_)
       .map(x => {(x._1._2, (x._1._1, x._2))})
       .aggregateByKey(List[(Int, Long)]())((acc, curr) => {
         (curr :: acc).sortBy(_._1)
@@ -152,11 +132,13 @@ object EventsKMeansModel {
   def entrenarModelo(): Unit = {
 
     val dataset = crearDataSet(0)
+    dataset.show(false)
 
-    val kmeans = new KMeans().setK(2)
+    val kmeans = new KMeans().setK(2).setMaxIter(5)
     val model = kmeans.fit(dataset)
 
     println(s"Centroids: \n${model.clusterCenters.mkString("\n")}")
+
 
 
     val WSSSE = model.computeCost(dataset)
@@ -164,8 +146,10 @@ object EventsKMeansModel {
     println(s"The size of each cluster is {${model.summary.clusterSizes.mkString(",")}}")
 
     model.summary.predictions.show()
+    println(model.getPredictionCol(1))
 
-    model.save("hdfs://localhost:9000////pfm/models/model2")
+
+    //model.save("hdfs://localhost:9000////pfm/models/model2")
 
   } // entrenar modelo
 
@@ -185,22 +169,46 @@ object EventsKMeansModel {
 
   } // predecirModelo
 
+  /**
+    * compararModelo hace una comparación entre el modelo que hemos entrenado y el suministrado por los expertos
+    * (distancias)
+    */
+  def compararModelo() : Unit = {
+
+    val sameModel = KMeansModel.load("hdfs://localhost:9000////pfm/models/model2")
+
+    println(s"Centroids: \n${sameModel.clusterCenters.mkString("\n")}")
+
+    println("Cluster 0 " + sameModel.clusterCenters.apply(0))
+    println("Cluster 1 " + sameModel.clusterCenters.apply(1))
+
+
+    val df = session.read.format("com.databricks.spark.csv")
+      .option("header", "true")
+      .option("delimiter", ";")
+      .load("./src/main/org/tfm/data/expertModel.csv")
+
+    val data = df.select(df("Label"), df("Data")).rdd
+      .map(x=> (x.getString(0), x.getString(1).split(',').map(_.toFloat))).foreach(println(_))
+      //.foreach(x=> lista(x.getString(1)))
+
+  } // comprararModelo
+
+  def lista(str: String) : Unit = {
+    val p = str.split(',').map(_.toFloat)
+    println(p)
+    p.foreach(println(_))
+  }
+
 
   // 7 * ( numero de dia de la semana -1) + hora
   def main(args: Array[String]): Unit = {
 
-
-    stringToDataPosition("17/12/2017-23:25:33.222")
-    stringToDataPosition("18/12/2017-23:25:33.222")
-    stringToDataPosition("19/12/2017-23:25:33.222")
-    stringToDataPosition("20/12/2017-23:25:33.222")
-    stringToDataPosition("21/12/2017-23:25:33.222")
-    stringToDataPosition("22/12/2017-23:25:33.222")
-    stringToDataPosition("23/12/2017-23:25:33.222")
-
-
+    //val df = crearDataSet(0)
+    //df.show(false)
     //entrenarModelo()
-    //predecirModelo()
+    //compararModelo()
+    predecirModelo()
 
     session.close()
 

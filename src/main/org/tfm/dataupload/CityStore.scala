@@ -34,12 +34,6 @@ object CityStore {
 
   def main(args: Array[String]): Unit = {
 
-    tupleOfFloats("-3.7906265259,40.3530853269")
-    tupleOfFloats("-3.5769081116,40.3530853269")
-    tupleOfFloats("-3.5769081116,40.5349377098")
-    tupleOfFloats("-3.7906265259,40.5349377098")
-    tupleOfFloats("-3.7906265259,40.3530853269")
-
     // leemos los clientes del fichero que tenemos en HDFS
 
     val df = sqlContext.read.format("com.databricks.spark.csv").option("header", "true").option("delimiter", ";")

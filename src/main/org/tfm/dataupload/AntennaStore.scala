@@ -10,7 +10,7 @@ import org.tfm.structs.{Antenna, Client}
 object AntennaStore {
 
   val conf = new SparkConf(true)
-    .set("spark.cassandra.connection.host", "127.0.0.1")
+    .set("spark.cassandra.connection.host", "127.0.0.1").set("spark.cassandra.connection.port", "9045")
     .setAppName("AntenaStore")
     .setMaster("local[*]")
   //val scCassandra = new SparkContext(conf)
