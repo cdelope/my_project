@@ -55,7 +55,7 @@ object EventStore {
 
   def main(args: Array[String]): Unit = {
 
-    var  path =  "hdfs://localhost:9000////pfm/events/predict/*elephoneEvents*.csv"
+    var  path =  "hdfs://localhost:9000////pfm/events/predict/*Events*.csv"
 
     val df = session.read.format("com.databricks.spark.csv")
       .option("header", "true")

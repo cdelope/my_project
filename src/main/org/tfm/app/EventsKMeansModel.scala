@@ -6,10 +6,11 @@ import org.apache.spark.SparkConf
 import org.apache.spark.ml.clustering.{KMeans, KMeansModel}
 import org.apache.spark.ml.linalg.Vectors
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
-import org.tfm.dataupload.AntennaStore
-import org.tfm.structs.Antenna
+import org.tfm.dataupload.{AntennaStore, AntennaUserStore}
+import org.tfm.structs.AntennaUser
 
-
+case class antennauserid (iduser: String, idantenna: String){
+}
 
 object EventsKMeansModel {
 
@@ -57,7 +58,7 @@ object EventsKMeansModel {
 
     } catch {
       case e: Exception => {
-        println("ERROR: " + data )
+        //println("ERROR: " + data )
         -1
       }
     }
@@ -97,22 +98,35 @@ object EventsKMeansModel {
       .option("delimiter", ";")
       .load(path)
 
-    val data = df.select(df("ClientId"), df("Date"), df("AntennaId")).rdd
-      .map(t => {
-        (stringToDataPosition(t(1).toString),(t(2).toString.trim))
-      }).filter(x=> {x._1 != -1})
-      .map(x => {(x,1L)})
-      .reduceByKey((x,y) => {(1L)})//_+_)
-      .map(x => {(x._1._2, (x._1._1, x._2))})
-      .aggregateByKey(List[(Int, Long)]())((acc, curr) => {
-        (curr :: acc).sortBy(_._1)
-      }, (l, r) => {
-        (l ::: r).sortBy(_._1)
-      })
+//    val data = df.select(df("ClientId"), df("Date"), df("AntennaId")).rdd
+//      .map(t => {
+//        (stringToDataPosition(t(1).toString),(t(2).toString.trim))
+//      }).filter(x=> {x._1 != -1})
+//      .map(x => {(x,1L)})
+//      .reduceByKey((x,y) => {(1L)})//_+_)
+//      .map(x => {(x._1._2, (x._1._1, x._2))})
+//      .aggregateByKey(List[(Int, Long)]())((acc, curr) => {
+//        (curr :: acc).sortBy(_._1)
+//      }, (l, r) => {
+//        (l ::: r).sortBy(_._1)
+//      })
 
-    val parsedData =  data.map(x=> {
-      (x._1, Vectors.sparse(168, parseVector(x._2)))
-    }).collect().toSeq
+    val data = df.select(df("ClientId"), df("Date"), df("AntennaId")).rdd
+      .map(clientDateAntennaRow => {
+        ((clientDateAntennaRow(0).toString,(clientDateAntennaRow(2).toString.trim)), stringToDataPosition(clientDateAntennaRow(1).toString))
+      //}).filter(case (_, date) => {date != -1})
+      }).filter(x=> x._2 != -1)
+      .aggregateByKey(Map[Int, Double]())((acc, curr) => {
+        acc ++ Map(curr -> 1.0)
+      }, (l, r) => {
+        l ++ r
+      }).mapValues(activityInMap => Vectors.sparse(168, activityInMap.toSeq))
+
+
+    //val parsedData =  data.map(x=> {
+    //  (x._1, Vectors.sparse(168, parseVector(x._2)))
+    //}).collect().toSeq
+    val parsedData = data
 
     // convertir un array de vector a un seq de (0, vector)
     val dataset = session.createDataFrame(parsedData).toDF("id","features")
@@ -132,9 +146,9 @@ object EventsKMeansModel {
   def entrenarModelo(): Unit = {
 
     val dataset = crearDataSet(0)
-    dataset.show(false)
+    //dataset.show(false)
 
-    val kmeans = new KMeans().setK(2).setMaxIter(5)
+    val kmeans = new KMeans().setK(2).setMaxIter(20)
     val model = kmeans.fit(dataset)
 
     println(s"Centroids: \n${model.clusterCenters.mkString("\n")}")
@@ -145,13 +159,23 @@ object EventsKMeansModel {
     println(s"Within Set Sum of Squared Errors= ${WSSSE}")
     println(s"The size of each cluster is {${model.summary.clusterSizes.mkString(",")}}")
 
-    model.summary.predictions.show()
+   model.summary.predictions.show(100)
     println(model.getPredictionCol(1))
 
 
-    //model.save("hdfs://localhost:9000////pfm/models/model2")
+    model.save("hdfs://localhost:9000////pfm/models/model2")
 
   } // entrenar modelo
+
+  def getDNI (data: String) : String = {
+    val dni = data.replaceAll("\\[", "").replace("]", "").split(",")
+    dni.apply(0)
+  }
+
+  def getAntenna (data: String) : String = {
+    val antenna = data.replaceAll("\\[", "").replace("]", "").split(",")
+    antenna.apply(1)
+  }
 
   def predecirModelo () : Unit = {
 
@@ -163,9 +187,11 @@ object EventsKMeansModel {
     import session.implicits._
 
     val transformed = sameModel.transform(dataset)
+    import org.apache.spark.sql.Row
+
     transformed.map(x =>{
-      new Antenna(x.get(0).toString, 0, 0.toFloat, 0.toFloat, x.get(2).toString.toInt)})
-      .collect().foreach(AntennaStore.updateLocaliz(_))
+      new AntennaUser(getDNI(x.get(0).toString), getAntenna(x.get(0).toString), x.get(2).toString.toInt)})
+      .collect().foreach(AntennaUserStore.insertReg(_))
 
   } // predecirModelo
 
@@ -204,6 +230,7 @@ object EventsKMeansModel {
   // 7 * ( numero de dia de la semana -1) + hora
   def main(args: Array[String]): Unit = {
 
+    println(getDNI("[52479638D,A01]"))
     //val df = crearDataSet(0)
     //df.show(false)
     //entrenarModelo()
