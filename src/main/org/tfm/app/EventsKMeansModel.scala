@@ -2,12 +2,13 @@ package org.tfm.app
 
 import java.util.Calendar
 
+import com.datastax.spark.connector._
 import org.apache.spark.SparkConf
 import org.apache.spark.ml.clustering.{KMeans, KMeansModel}
 import org.apache.spark.ml.linalg.Vectors
-import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
-import org.tfm.dataupload.{AntennaStore, AntennaUserStore}
-import org.tfm.structs.AntennaUser
+import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.tfm.structs.{Antenna, AntennaUser, Client}
+import org.tfm.dataupload.Conf
 
 case class antennauserid (iduser: String, idantenna: String){
 }
@@ -15,17 +16,14 @@ case class antennauserid (iduser: String, idantenna: String){
 object EventsKMeansModel {
 
   val conf = new SparkConf(true)
-    .set("spark.cassandra.connection.host", "127.0.0.1").set("spark.cassandra.connection.port", "9045")
+    .set("spark.cassandra.connection.host", Conf._cassandra_host)
+    .set("spark.cassandra.connection.port", Conf._cassandra_port)
 
   val session = SparkSession.builder()
-    .appName("Test spark")
+    .appName(Conf._app_name_kmeans)
     .master("local")
     .config(conf)
     .getOrCreate()
-
-
-  //val normalizer1 = new Normalizer()
-
 
   /**
     * Este método devuelve la posición (de 0 a 167) dependiendo del día de la semana y hora que se pasa
@@ -51,8 +49,6 @@ object EventsKMeansModel {
 
       val pos = calendar.get(Calendar.DAY_OF_WEEK)
       val res = ((pos-1) * 24) + hora.toInt
-
-      //println("Fecha: " + data + " pos: " + pos + " hora: " + hora.toInt.toString + " res: " +res)
 
       res
 
@@ -90,26 +86,14 @@ object EventsKMeansModel {
   def crearDataSet(trainning: Int) : DataFrame = {
 
     var  path = ""
-    if (trainning == 0)  path = "hdfs://localhost:9000////pfm/events/trainning/*elephoneEvents*.csv"
-        else path = "hdfs://localhost:9000////pfm/events/predict/*elephoneEvents*.csv"
+    if (trainning == 0)  path = Conf._hdfs_path_event_train
+        else path = Conf._hdfs_path_event_predict
 
     val df = session.read.format("com.databricks.spark.csv")
       .option("header", "true")
       .option("delimiter", ";")
       .load(path)
 
-//    val data = df.select(df("ClientId"), df("Date"), df("AntennaId")).rdd
-//      .map(t => {
-//        (stringToDataPosition(t(1).toString),(t(2).toString.trim))
-//      }).filter(x=> {x._1 != -1})
-//      .map(x => {(x,1L)})
-//      .reduceByKey((x,y) => {(1L)})//_+_)
-//      .map(x => {(x._1._2, (x._1._1, x._2))})
-//      .aggregateByKey(List[(Int, Long)]())((acc, curr) => {
-//        (curr :: acc).sortBy(_._1)
-//      }, (l, r) => {
-//        (l ::: r).sortBy(_._1)
-//      })
 
     val data = df.select(df("ClientId"), df("Date"), df("AntennaId")).rdd
       .map(clientDateAntennaRow => {
@@ -123,9 +107,6 @@ object EventsKMeansModel {
       }).mapValues(activityInMap => Vectors.sparse(168, activityInMap.toSeq))
 
 
-    //val parsedData =  data.map(x=> {
-    //  (x._1, Vectors.sparse(168, parseVector(x._2)))
-    //}).collect().toSeq
     val parsedData = data
 
     // convertir un array de vector a un seq de (0, vector)
@@ -160,10 +141,8 @@ object EventsKMeansModel {
     println(s"The size of each cluster is {${model.summary.clusterSizes.mkString(",")}}")
 
    model.summary.predictions.show(100)
-    println(model.getPredictionCol(1))
 
-
-    model.save("hdfs://localhost:9000////pfm/models/model2")
+    model.save(Conf._hdfs_path_model)
 
   } // entrenar modelo
 
@@ -179,46 +158,47 @@ object EventsKMeansModel {
 
   def predecirModelo () : Unit = {
 
-    val sameModel = KMeansModel.load("hdfs://localhost:9000////pfm/models/model2")
+    val sameModel = KMeansModel.load(Conf._hdfs_path_model)
 
     // convertir un array de vector a un seq de (0, vector)
     val dataset = crearDataSet(1)
 
     import session.implicits._
 
-    val transformed = sameModel.transform(dataset)
-    import org.apache.spark.sql.Row
+    val clients = session.sparkContext.cassandraTable[Client](Conf._schema, Conf._table_name_client)
+        .select("clientid", "gender", "age", "civilstatus", "nationality", "socioeconlev")
+      .toDS()//.show(10)
 
-    transformed.map(x =>{
-      new AntennaUser(getDNI(x.get(0).toString), getAntenna(x.get(0).toString), x.get(2).toString.toInt)})
-      .collect().foreach(AntennaUserStore.insertReg(_))
+
+    val transformed = sameModel.transform(dataset)
+
+    val eventos = transformed.map(x => {
+      val dni = getDNI(x.get(0).toString)
+      (getDNI(x.get(0).toString),getAntenna(x.get(0).toString), x.get(2).toString.toInt, 1L)
+    }).toDF("clientid", "antennaid", "categoria", "count")
+
+    val eventos_clientes = eventos.join(clients, eventos("clientid")===clients("clientid"), "inner")
+    val tablaCassandra = eventos_clientes.map(event => {
+      new AntennaUser(event.getString(0), event.getString(6), event.getInt(5), event.getString(8), event.getString(7),
+        event.getString(9), event.getString(1), event.getInt(2))
+    })
+
+    tablaCassandra.toDF().write.format("org.apache.spark.sql.cassandra")
+      .options(Map( "keyspace" -> Conf._schema,
+      "table" -> Conf._table_name_antennabyuser ))
+      .mode("append")
+          .save()
+
+    // para cada uno de los eventos, actualizo el contador
+    eventos.select("antennaid" , "categoria", "count")
+      .write.format("org.apache.spark.sql.cassandra")
+      .options(Map( "keyspace" -> Conf._schema,
+        "table" -> Conf._table_name_antennacounter))
+      .mode("append")
+      .save()
 
   } // predecirModelo
 
-  /**
-    * compararModelo hace una comparación entre el modelo que hemos entrenado y el suministrado por los expertos
-    * (distancias)
-    */
-  def compararModelo() : Unit = {
-
-    val sameModel = KMeansModel.load("hdfs://localhost:9000////pfm/models/model2")
-
-    println(s"Centroids: \n${sameModel.clusterCenters.mkString("\n")}")
-
-    println("Cluster 0 " + sameModel.clusterCenters.apply(0))
-    println("Cluster 1 " + sameModel.clusterCenters.apply(1))
-
-
-    val df = session.read.format("com.databricks.spark.csv")
-      .option("header", "true")
-      .option("delimiter", ";")
-      .load("./src/main/org/tfm/data/expertModel.csv")
-
-    val data = df.select(df("Label"), df("Data")).rdd
-      .map(x=> (x.getString(0), x.getString(1).split(',').map(_.toFloat))).foreach(println(_))
-      //.foreach(x=> lista(x.getString(1)))
-
-  } // comprararModelo
 
   def lista(str: String) : Unit = {
     val p = str.split(',').map(_.toFloat)
@@ -227,15 +207,48 @@ object EventsKMeansModel {
   }
 
 
+  /**
+    * Una vez que tenemos clasificadas las antenas por usuario, debemos
+    * hacer una clasificacion "general" para cada antena,
+    * para ello cruzamos la tabla de contadores con las antenas y actualizamos la localizacion (clasificación)
+    */
+  def definirTipoAntena(): Unit = {
+
+    import session.implicits._
+
+    //val antennas = session.sparkContext.cassandraTable[String](Conf._schema, Conf._table_name_antenna)
+     // .select("id").toDF("id")//.show(10)
+
+    val counter = session.sparkContext
+      .cassandraTable[(String, Int, Long)](Conf._schema, Conf._table_name_antennacounter)
+      .select("antennaid", "categoria", "count").toDF("antennaid", "categoria", "count")//.show(10)
+
+    val clasificacion = counter.rdd //antennas.join(counter, antennas("id") === counter("antennaid"), "inner").rdd
+        .map(x => {
+          (x.getString(0), (x.getInt(1), x.getLong(2)))
+        }).aggregateByKey((0,0L))(
+      (acc,curr)=>{
+        if (acc._2 > curr._2)
+          (acc)
+        else
+          curr
+      },(l,r)=>{
+        if (l._2 > r._2)
+          (l)
+        else
+          r
+      }).map(x => {new Antenna(x._1,0, 0f, 0f ,x._2._1)})
+      .saveToCassandra(Conf._schema, Conf._table_name_antenna, SomeColumns("id", "localiz") )
+
+  }
+
+
   // 7 * ( numero de dia de la semana -1) + hora
   def main(args: Array[String]): Unit = {
 
-    println(getDNI("[52479638D,A01]"))
-    //val df = crearDataSet(0)
-    //df.show(false)
     //entrenarModelo()
-    //compararModelo()
-    predecirModelo()
+    //predecirModelo()
+    //definirTipoAntena()
 
     session.close()
 
