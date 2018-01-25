@@ -9,9 +9,11 @@ import org.tfm.structs.{Antenna, City}
 object CityStore {
 
   val conf = new SparkConf(true)
-    .set("spark.cassandra.connection.host", "127.0.0.1")
-    .setAppName("AntenaStore")
-    .setMaster("local[*]")
+    .set("spark.cassandra.connection.host", Conf._cassandra_host)
+    .set("spark.cassandra.connection.port", Conf._cassandra_port)
+    .setAppName(Conf._app_name_city)
+    .setMaster(Conf._master)
+
   val scCassandra = new SparkContext(conf)
 
   val sqlContext = new org.apache.spark.sql.SQLContext(scCassandra)
@@ -19,16 +21,14 @@ object CityStore {
   def storeCity(city: City): Unit = {
 
     val cityCass = scCassandra.parallelize(Seq(city))
-    cityCass.saveToCassandra("tfm", "city")
+    cityCass.saveToCassandra(Conf._schema, Conf._table_name_city)
 
   }
 
   def tupleOfFloats(data: String) : (Float, Float) = {
-    println("Data: -> " + data)
     val pos = data.indexOf(",")
     val float1 = data.substring(0, pos)
     val float2 = data.substring(pos + 1, data.length)
-    println(data + " : "  + float1 + "--" + float2)
     (float1.toFloat, float2.toFloat)
   }
 
@@ -36,8 +36,10 @@ object CityStore {
 
     // leemos los clientes del fichero que tenemos en HDFS
 
-    val df = sqlContext.read.format("com.databricks.spark.csv").option("header", "true").option("delimiter", ";")
-      .load("hdfs://localhost:9000////pfm/cities/cities.csv")
+    val df = sqlContext.read.format("com.databricks.spark.csv")
+      .option("header", "true")
+      .option("delimiter", ";")
+      .load(Conf._hdfs_path_city)
 
     import sqlContext.implicits._
     // y hacemos una carga en la tabla client de cassandra
@@ -46,8 +48,11 @@ object CityStore {
                           tupleOfFloats(t(2).toString), tupleOfFloats(t(3).toString),
                           tupleOfFloats(t(4).toString), tupleOfFloats(t(5).toString),
                           tupleOfFloats(t(6).toString)
-      )} ) .collect().foreach(storeCity(_)/*println*/)
-
-  }
+      )} )
+      .toDF().write.format(Conf._cassandra_format)
+      .options(Map( "keyspace" -> Conf._schema, "table" -> Conf._table_name_city ))
+      .mode("append")
+      .save()
+  } // FIN.- main
 
 }
