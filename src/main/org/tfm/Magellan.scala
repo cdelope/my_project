@@ -1,7 +1,9 @@
-import org.apache.spark.SparkConf
-import org.tfm.dataupload.Conf
-import org.apache.spark.sql.SparkSession
+package org.tfm
+
 import com.datastax.spark.connector._
+import org.apache.spark.SparkConf
+import org.apache.spark.sql.SparkSession
+import org.tfm.dataupload.Conf
 import org.tfm.structs.Antenna
 /**
   * Proceso encargado de identificar la ciudad en la que están
