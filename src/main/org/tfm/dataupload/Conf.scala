@@ -32,5 +32,8 @@ object Conf {
   val _hdfs_path_event_train = "hdfs://localhost:9000/pfm/data/events/training/*Events*.csv"
   val _hdfs_path_model = "hdfs://localhost:9000/pfm/data/models/model"
 
+  // fichero geo
+  val _geo_json = "./data/cities.json"
+
 
 }
