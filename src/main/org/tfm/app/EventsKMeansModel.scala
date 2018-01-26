@@ -111,6 +111,7 @@ object EventsKMeansModel {
 
     // convertir un array de vector a un seq de (0, vector)
     val dataset = session.createDataFrame(parsedData).toDF("id","features")
+    //dataset.select("features").show(10, false)
     dataset
   }
 
@@ -132,17 +133,19 @@ object EventsKMeansModel {
     val kmeans = new KMeans().setK(2).setMaxIter(20)
     val model = kmeans.fit(dataset)
 
-    println(s"Centroids: \n${model.clusterCenters.mkString("\n")}")
+    //println(s"Centroids: \n${model.clusterCenters.mkString("\n")}")
 
+    session.sparkContext.parallelize(model.clusterCenters).saveAsTextFile(Conf._hdfs_path_model + "/clusterCenters")
 
 
     val WSSSE = model.computeCost(dataset)
-    println(s"Within Set Sum of Squared Errors= ${WSSSE}")
-    println(s"The size of each cluster is {${model.summary.clusterSizes.mkString(",")}}")
+    //println(s"Within Set Sum of Squared Errors= ${WSSSE}")
+    //println(s"The size of each cluster is {${model.summary.clusterSizes.mkString(",")}}")
 
-   model.summary.predictions.show(100)
+   //model.summary.predictions.show(100)
 
     model.save(Conf._hdfs_path_model)
+
 
   } // entrenar modelo
 
@@ -200,13 +203,6 @@ object EventsKMeansModel {
   } // predecirModelo
 
 
-  def lista(str: String) : Unit = {
-    val p = str.split(',').map(_.toFloat)
-    println(p)
-    p.foreach(println(_))
-  }
-
-
   /**
     * Una vez que tenemos clasificadas las antenas por usuario, debemos
     * hacer una clasificacion "general" para cada antena,
@@ -246,9 +242,9 @@ object EventsKMeansModel {
   // 7 * ( numero de dia de la semana -1) + hora
   def main(args: Array[String]): Unit = {
 
-    //entrenarModelo()
-    //predecirModelo()
-    //definirTipoAntena()
+    entrenarModelo()
+    predecirModelo()
+    definirTipoAntena()
 
     session.close()
 
